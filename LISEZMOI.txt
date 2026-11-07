@@ -1,0 +1,49 @@
+MON IPTV - APPLI ANDROID TV / FIRE TV
+====================================
+
+Ce dossier contient le code de l'appli. GitHub (gratuit) fabrique l'APK pour toi.
+
+1) Compte GitHub
+   - Crée un compte gratuit sur https://github.com (si tu n'en as pas).
+
+2) Nouveau dépôt
+   - Clique sur "+" (en haut à droite) > "New repository".
+   - Nom : mon-iptv     Visibilité : PUBLIC     > "Create repository".
+   (Public est nécessaire pour que Downloader puisse télécharger l'APK.
+    Il n'y a aucun identifiant IPTV dans le code : tu les saisis dans l'appli.)
+
+3) Envoyer les fichiers
+   - Décompresse le zip.
+   - Sur la page du dépôt : clique "uploading an existing file".
+   - Glisse le CONTENU du dossier décompressé (pas le zip lui-même),
+     y compris le dossier ".github", puis "Commit changes".
+
+   Si le dossier ".github" n'apparaît pas dans la liste après l'envoi :
+   "Add file" > "Create new file", nom exact :  .github/workflows/build.yml
+   Colle-y le contenu du fichier build.yml, puis "Commit changes".
+
+4) Attendre la fabrication (3 à 6 minutes)
+   - Onglet "Actions" du dépôt. Si GitHub demande d'activer les workflows,
+     clique sur le bouton vert.
+   - Quand la ligne a une coche verte, l'APK est prêt.
+   - Si la ligne est rouge : ouvre-la et envoie-moi une capture du message d'erreur.
+
+5) Lien de téléchargement pour Downloader
+   https://github.com/TON_PSEUDO/mon-iptv/releases/latest/download/MonIPTV.apk
+   (remplace TON_PSEUDO par ton nom d'utilisateur GitHub)
+
+6) Sur la télé
+   - Installe l'appli "Downloader" depuis le store de la télé.
+   - Autorise-la à installer des applis inconnues :
+       Android TV : Paramètres > Sécurité > Sources inconnues > Downloader
+       Fire TV    : Paramètres > Ma Fire TV > Options pour les développeurs
+                    > Installer des applis inconnues > Downloader
+   - Ouvre Downloader, saisis le lien du point 5, télécharge, "Installer".
+   - L'appli "Mon IPTV" apparaît dans la liste des applications.
+
+Utilisation à la télécommande :
+   - Flèches : se déplacer / OK : choisir ou lecture-pause
+   - Flèches gauche/droite sur un film : -10 s / +10 s
+   - Retour : ferme le lecteur, puis quitte l'appli
+   - Pour saisir serveur / identifiant / mot de passe, l'appli Android TV
+     sur ton téléphone permet de taper au clavier.

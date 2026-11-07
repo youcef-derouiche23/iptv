@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mon IPTV</title>
+<script src="/hls.min.js"></script>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#0f1117;color:#e8eaf0;font:15px system-ui,sans-serif}
+button,input,select{font:inherit;color:inherit}
+button{background:#232838;border:1px solid #2f3650;border-radius:8px;padding:8px 12px;cursor:pointer}
+button:hover{background:#2c3350}
+button.on{background:#4f6bff;border-color:#4f6bff}
+input,select{background:#181c27;border:1px solid #2f3650;border-radius:8px;padding:10px;width:100%}
+[hidden]{display:none!important}
+#login{max-width:380px;margin:8vh auto;padding:24px;display:grid;gap:12px}
+#login h1{margin:0 0 8px}
+#err{color:#ff7b7b;min-height:1.2em}
+header{display:flex;gap:8px;align-items:center;padding:10px;background:#151925;position:sticky;top:0;z-index:5;flex-wrap:wrap}
+header input{flex:1;min-width:140px;width:auto}
+#app{display:grid;grid-template-columns:240px 1fr;min-height:100vh}
+aside{background:#121520;padding:8px;overflow-y:auto;max-height:calc(100vh - 58px);position:sticky;top:58px;align-self:start}
+.cat{display:flex;align-items:center;gap:4px;padding:8px;border-radius:8px;cursor:pointer}
+.cat:hover{background:#1c2133}
+.cat.sel{background:#4f6bff33}
+.cat span.n{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cat small{opacity:.5}
+.dim{opacity:.35}
+main{padding:10px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px}
+.card{background:#181c27;border-radius:10px;overflow:hidden;cursor:pointer;position:relative}
+.card img{width:100%;aspect-ratio:2/3;object-fit:cover;background:#232838;display:block}
+.card .t{padding:6px 8px;font-size:13px;height:3.2em;overflow:hidden}
+.row{display:flex;align-items:center;gap:10px;padding:8px;background:#181c27;border-radius:10px;margin-bottom:6px;cursor:pointer}
+.row img{width:42px;height:42px;object-fit:contain;background:#232838;border-radius:6px}
+.row .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.acts{display:flex;gap:4px}
+.card .acts{position:absolute;top:4px;right:4px}
+.acts button{padding:4px 7px;background:#000a}
+.star{color:#ffd24d}
+#more{margin:14px auto;display:block}
+#player{position:fixed;inset:0;background:#000e;z-index:20;display:flex;flex-direction:column;padding:10px;gap:8px;overflow-y:auto}
+#pbar{display:flex;gap:8px;align-items:center}
+#pbar b{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+video{width:100%;max-height:70vh;background:#000;border-radius:8px}
+.cat:focus-visible,.row:focus-visible,.card:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,video:focus-visible{outline:3px solid #ffd24d;outline-offset:2px}
+#perr{color:#ff7b7b}
+#eps{display:grid;gap:6px}
+#eps button{text-align:left}
+@media(max-width:700px){
+  #app{grid-template-columns:1fr}
+  aside{position:static;max-height:none;display:flex;overflow-x:auto;gap:4px;white-space:nowrap}
+  .cat{flex:none}
+}
+</style>
+</head>
+<body>
+
+<form id="login">
+  <h1>Mon IPTV</h1>
+  <input id="host" placeholder="Serveur (ex. http://exemple.com:8080)" required>
+  <input id="user" placeholder="Nom d'utilisateur" required autocomplete="username">
+  <input id="pass" type="password" placeholder="Mot de passe" required autocomplete="current-password">
+  <button class="on">Se connecter</button>
+  <div id="err"></div>
+</form>
+
+<div id="app" hidden>
+  <header style="grid-column:1/-1">
+    <button data-tab="live" class="on">Live</button>
+    <button data-tab="vod">Films</button>
+    <button data-tab="series">Séries</button>
+    <input id="q" placeholder="Rechercher…">
+    <button id="fr" class="on" title="Ne garder que le contenu français">🇫🇷 FR</button>
+    <button id="manage" title="Afficher tout et choisir ce qu'on garde">Gérer</button>
+    <button id="logout">Quitter</button>
+  </header>
+  <aside id="cats"></aside>
+  <main><div id="list"></div></main>
+</div>
+
+<div id="player" hidden>
+  <div id="pbar"><b id="ptitle"></b><button id="pclose">✕ Fermer</button></div>
+  <video id="video" controls autoplay playsinline></video>
+  <div id="perr"></div>
+  <div id="eps"></div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const store = {
+  get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
+  set(k, v) { localStorage.setItem(k, JSON.stringify(v)); }
+};
+
+let cfg = store.get('cfg', null);
+let prefs = store.get('prefs', { hidden: {}, fav: {}, hcat: {} });
+const S = { tab: 'live', data: {}, cat: 'all', q: '', manage: false, limit: 300, frOnly: store.get('frOnly', true) };
+
+// Détection du contenu français : par nom de catégorie, ou préfixe "FR" dans le titre
+const FR_RE = /(^|[^a-z0-9])(fr|france|french|francais|français|vf|vff|vostfr|truefrench|qc|quebec|québec)([^a-z0-9]|$)/i;
+const FR_NAME_RE = /^\s*[\[\(|▎\-]*\s*(fr|vf|vff|vostfr|truefrench)\b/i;
+const isFrCat = (name) => FR_RE.test(String(name || '').normalize('NFC'));
+function frSet(tab) {
+  const d = S.data[tab];
+  if (!d.fr) d.fr = new Set(d.cats.filter((c) => isFrCat(c.category_name)).map((c) => String(c.category_id)));
+  return d.fr;
+}
+const isFrItem = (tab, i) => frSet(tab).has(String(i.category_id)) || FR_NAME_RE.test(i.name || '');
+
+// ---------- Confort télécommande / clavier ----------
+let usingKey = false;
+let lastFocus = null;
+addEventListener('keydown', () => { usingKey = true; }, true);
+addEventListener('mousedown', () => { usingKey = false; }, true);
+addEventListener('touchstart', () => { usingKey = false; }, true);
+const tv = {
+  prep(root) { root.querySelectorAll('.cat,.row,.card').forEach((el) => el.setAttribute('tabindex', '0')); },
+  focus(el) { if (usingKey && el) el.focus(); }
+};
+window.tvBack = () => {
+  if (!$('#player').hidden) { $('#pclose').click(); return true; }
+  return false;
+};
+document.addEventListener('keydown', (e) => {
+  const t = e.target;
+  if (e.key === 'Enter' && t.matches && t.matches('.cat,.row,.card')) { e.preventDefault(); t.click(); return; }
+  if ($('#player').hidden) return;
+  if (e.key === 'Escape') { window.tvBack(); return; }
+  const v = $('#video');
+  if (t === v || t === document.body) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); v.paused ? v.play() : v.pause(); }
+    else if (e.key === 'ArrowLeft' && isFinite(v.duration)) { e.preventDefault(); v.currentTime = Math.max(0, v.currentTime - 10); }
+    else if (e.key === 'ArrowRight' && isFinite(v.duration)) { e.preventDefault(); v.currentTime += 10; }
+  }
+});
+const TABS = {
+  live:   { cats: 'get_live_categories', items: 'get_live_streams', id: 'stream_id', img: 'stream_icon' },
+  vod:    { cats: 'get_vod_categories',  items: 'get_vod_streams',  id: 'stream_id', img: 'stream_icon' },
+  series: { cats: 'get_series_categories', items: 'get_series',     id: 'series_id', img: 'cover' }
+};
+
+const px = (url) => '/proxy?url=' + encodeURIComponent(url);
+const base = () => cfg.host.replace(/\/+$/, '');
+const savePrefs = () => store.set('prefs', prefs);
+
+async function api(action, extra = '') {
+  const url = `${base()}/player_api.php?username=${encodeURIComponent(cfg.user)}&password=${encodeURIComponent(cfg.pass)}` +
+    (action ? `&action=${action}` : '') + extra;
+  const r = await fetch(px(url));
+  if (!r.ok) throw new Error('Réponse ' + r.status);
+  return r.json();
+}
+
+// ---------- Connexion ----------
+$('#login').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  let host = $('#host').value.trim();
+  if (!/^https?:\/\//i.test(host)) host = 'http://' + host;
+  cfg = { host, user: $('#user').value.trim(), pass: $('#pass').value };
+  $('#err').textContent = 'Connexion…';
+  try {
+    const info = await api('');
+    if (!info.user_info || Number(info.user_info.auth) !== 1) throw new Error('Identifiants refusés');
+    store.set('cfg', cfg);
+    start();
+  } catch (err) {
+    $('#err').textContent = 'Échec : ' + err.message;
+  }
+});
+
+$('#logout').onclick = () => { localStorage.removeItem('cfg'); location.reload(); };
+
+function start() {
+  $('#login').hidden = true;
+  $('#app').hidden = false;
+  loadTab('live');
+}
+
+if (cfg) {
+  $('#host').value = cfg.host; $('#user').value = cfg.user; $('#pass').value = cfg.pass;
+  start();
+}
+
+// ---------- Chargement ----------
+async function loadTab(tab) {
+  S.tab = tab; S.cat = 'all'; S.limit = 300;
+  document.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
+  if (!S.data[tab]) {
+    $('#list').innerHTML = '<p>Chargement…</p>';
+    try {
+      const [cats, items] = await Promise.all([api(TABS[tab].cats), api(TABS[tab].items)]);
+      S.data[tab] = { cats: Array.isArray(cats) ? cats : [], items: Array.isArray(items) ? items : [] };
+    } catch (err) {
+      $('#list').innerHTML = `<p>Erreur : ${esc(err.message)}</p>`;
+      return;
+    }
+  }
+  render();
+}
+
+document.querySelectorAll('[data-tab]').forEach((b) => (b.onclick = () => loadTab(b.dataset.tab)));
+$('#q').oninput = (e) => { S.q = e.target.value.toLowerCase(); S.limit = 300; renderList(); };
+$('#fr').classList.toggle('on', S.frOnly);
+$('#fr').onclick = () => {
+  S.frOnly = !S.frOnly; store.set('frOnly', S.frOnly);
+  $('#fr').classList.toggle('on', S.frOnly);
+  S.cat = 'all'; S.limit = 300; render();
+};
+$('#manage').onclick =() => { S.manage = !S.manage; $('#manage').classList.toggle('on', S.manage); render(); };
+
+// ---------- Affichage ----------
+const idOf = (i) => String(i[TABS[S.tab].id]);
+
+function visibleItems() {
+  const d = S.data[S.tab];
+  if (!d) return [];
+  const h = prefs.hidden[S.tab] || {}, f = prefs.fav[S.tab] || {}, hc = prefs.hcat[S.tab] || {};
+  let items = d.items.filter((i) => {
+    if (S.frOnly && !isFrItem(S.tab, i)) return false;
+    if (!S.manage && (h[idOf(i)] || hc[String(i.category_id)])) return false;
+    if (S.cat === 'fav') return !!f[idOf(i)];
+    if (S.cat !== 'all' && String(i.category_id) !== S.cat) return false;
+    return true;
+  });
+  if (S.q) items = items.filter((i) => (i.name || '').toLowerCase().includes(S.q));
+  return items;
+}
+
+function render() { renderCats(); renderList(); }
+
+function renderCats() {
+  const d = S.data[S.tab]; if (!d) return;
+  const hc = prefs.hcat[S.tab] || {};
+  const counts = {};
+  d.items.forEach((i) => { const c = String(i.category_id); counts[c] = (counts[c] || 0) + 1; });
+  let html = `<div class="cat ${S.cat === 'all' ? 'sel' : ''}" data-cat="all"><span class="n">Tout</span></div>
+              <div class="cat ${S.cat === 'fav' ? 'sel' : ''}" data-cat="fav"><span class="n"><span class="star">★</span> Favoris</span></div>`;
+  d.cats.forEach((c) => {
+    const id = String(c.category_id);
+    if (S.frOnly && !frSet(S.tab).has(id)) return;
+    if (hc[id] && !S.manage) return;
+    html += `<div class="cat ${S.cat === id ? 'sel' : ''} ${hc[id] ? 'dim' : ''}" data-cat="${esc(id)}">
+      <span class="n">${esc(c.category_name)}</span><small>${counts[id] || 0}</small>
+      ${S.manage ? `<button data-catact="${esc(id)}">${hc[id] ? '🚫' : '👁'}</button>` : ''}</div>`;
+  });
+  $('#cats').innerHTML = html;
+  tv.prep($('#cats'));
+}
+
+$('#cats').onclick = (e) => {
+  const b = e.target.closest('[data-catact]');
+  if (b) {
+    const hc = (prefs.hcat[S.tab] ||= {});
+    hc[b.dataset.catact] ? delete hc[b.dataset.catact] : (hc[b.dataset.catact] = 1);
+    savePrefs(); return render();
+  }
+  const c = e.target.closest('[data-cat]');
+  if (c) { S.cat = c.dataset.cat; S.limit = 300; render(); tv.focus($('#cats .sel')); }
+};
+
+function renderList() {
+  const items = visibleItems();
+  const t = TABS[S.tab];
+  const h = prefs.hidden[S.tab] || {}, f = prefs.fav[S.tab] || {};
+  const slice = items.slice(0, S.limit);
+  const acts = (id) => `<span class="acts">
+      <button data-act="fav" data-id="${esc(id)}" class="star">${f[id] ? '★' : '☆'}</button>
+      ${S.manage ? `<button data-act="hide" data-id="${esc(id)}">${h[id] ? '🚫' : '👁'}</button>` : ''}</span>`;
+  let html;
+  if (S.tab === 'live') {
+    html = slice.map((i) => {
+      const id = idOf(i);
+      return `<div class="row ${h[id] ? 'dim' : ''}" data-id="${esc(id)}">
+        <img loading="lazy" src="${esc(i[t.img] || '')}" onerror="this.style.visibility='hidden'">
+        <span class="t">${esc(i.name)}</span>${acts(id)}</div>`;
+    }).join('');
+  } else {
+    html = '<div class="grid">' + slice.map((i) => {
+      const id = idOf(i);
+      return `<div class="card ${h[id] ? 'dim' : ''}" data-id="${esc(id)}">
+        <img loading="lazy" src="${esc(i[t.img] || '')}" onerror="this.style.visibility='hidden'">
+        ${acts(id)}<div class="t">${esc(i.name)}</div></div>`;
+    }).join('') + '</div>';
+  }
+  if (!items.length) html = '<p>Rien à afficher.</p>';
+  if (items.length > slice.length) html += `<button id="more">Afficher plus (${items.length - slice.length} restants)</button>`;
+  $('#list').innerHTML = html;
+  tv.prep($('#list'));
+}
+
+$('#list').onclick = (e) => {
+  if (e.target.id === 'more') { S.limit += 300; return renderList(); }
+  const a = e.target.closest('[data-act]');
+  if (a) {
+    const key = a.dataset.act === 'fav' ? 'fav' : 'hidden';
+    const m = (prefs[key][S.tab] ||= {});
+    m[a.dataset.id] ? delete m[a.dataset.id] : (m[a.dataset.id] = 1);
+    savePrefs(); renderList();
+    tv.focus($(`#list [data-act="${a.dataset.act}"][data-id="${CSS.escape(a.dataset.id)}"]`));
+    return;
+  }
+  const el = e.target.closest('[data-id]');
+  if (!el) return;
+  const item = S.data[S.tab].items.find((i) => idOf(i) === el.dataset.id);
+  if (item) openItem(item);
+};
+
+// ---------- Lecture ----------
+let hls = null;
+
+function showPlayer(title) {
+  $('#ptitle').textContent = title;
+  $('#perr').textContent = '';
+  $('#eps').innerHTML = '';
+  if ($('#player').hidden) lastFocus = document.activeElement;
+  $('#player').hidden = false;
+  tv.focus($('#video'));
+}
+
+function stopPlayer() {
+  if (hls) { hls.destroy(); hls = null; }
+  const v = $('#video');
+  v.pause(); v.removeAttribute('src'); v.load();
+}
+
+$('#pclose').onclick = () => {
+  stopPlayer(); $('#player').hidden = true;
+  if (lastFocus && document.contains(lastFocus)) tv.focus(lastFocus);
+};
+
+function play(url, title) {
+  stopPlayer();
+  $('#ptitle').textContent = title;
+  $('#perr').textContent = '';
+  const v = $('#video');
+  const src = px(url);
+  if (/\.m3u8(\?|$)/i.test(url) && window.Hls && Hls.isSupported()) {
+    hls = new Hls({ lowLatencyMode: false });
+    hls.loadSource(src);
+    hls.attachMedia(v);
+    hls.on(Hls.Events.ERROR, (_, d) => {
+      if (d.fatal) $('#perr').textContent = 'Flux indisponible (' + d.details + ').';
+    });
+  } else {
+    v.src = src;
+  }
+  v.play().catch(() => {});
+  v.onerror = () => { $('#perr').textContent = 'Format non lisible par le navigateur (certains .mkv/.avi ne passent pas).'; };
+}
+
+function openItem(item) {
+  const c = cfg, b = base();
+  if (S.tab === 'live') {
+    showPlayer(item.name);
+    play(`${b}/live/${encodeURIComponent(c.user)}/${encodeURIComponent(c.pass)}/${item.stream_id}.m3u8`, item.name);
+  } else if (S.tab === 'vod') {
+    showPlayer(item.name);
+    const ext = item.container_extension || 'mp4';
+    play(`${b}/movie/${encodeURIComponent(c.user)}/${encodeURIComponent(c.pass)}/${item.stream_id}.${ext}`, item.name);
+  } else {
+    openSeries(item);
+  }
+}
+
+async function openSeries(item) {
+  stopPlayer();
+  showPlayer(item.name);
+  $('#eps').textContent = 'Chargement des épisodes…';
+  try {
+    const info = await api('get_series_info', '&series_id=' + item.series_id);
+    const eps = info.episodes || {};
+    const seasons = Object.keys(eps).sort((a, b) => a - b);
+    if (!seasons.length) { $('#eps').textContent = 'Aucun épisode.'; return; }
+    const draw = (s) => {
+      const list = eps[s] || [];
+      $('#epl').innerHTML = list.map((e, n) =>
+        `<button data-ep="${n}">E${esc(e.episode_num)} · ${esc(e.title || '')}</button>`).join('');
+      $('#epl').onclick = (ev) => {
+        const bt = ev.target.closest('[data-ep]'); if (!bt) return;
+        const e = list[bt.dataset.ep];
+        play(`${base()}/series/${encodeURIComponent(cfg.user)}/${encodeURIComponent(cfg.pass)}/${e.id}.${e.container_extension || 'mp4'}`,
+          `${item.name} — S${s}E${e.episode_num}`);
+      };
+    };
+    $('#eps').innerHTML = `<select id="sel">${seasons.map((s) => `<option value="${esc(s)}">Saison ${esc(s)}</option>`).join('')}</select><div id="epl" style="display:grid;gap:6px"></div>`;
+    $('#sel').onchange = (e) => draw(e.target.value);
+    draw(seasons[0]);
+    tv.focus($('#sel'));
+  } catch (err) {
+    $('#eps').textContent = 'Erreur : ' + err.message;
+  }
+}
+</script>
+</body>
+</html>
